@@ -4,12 +4,13 @@ module BFSMsg {
     use Reflection;
     use Set;
     use Time; 
-    use Sort; 
+    use Sort;
+    use List;
 
-    // Modules contributed to Chapel. 
+    // Package modules. 
     use DistributedBag; 
     
-    // Arachne Modules.
+    // Arachne modules.
     use GraphArray;
     use Utils;
     
@@ -56,7 +57,7 @@ module BFSMsg {
     }
 
     /**
-    * Run BFS on a(n) (un)directed or (un)weighted graph. 
+    * Run BFS on a(n) (un)directed and (un)weighted graph. 
     *
     * cmd: operation to perform. 
     * msgArgs: arugments passed to backend. 
@@ -76,8 +77,8 @@ module BFSMsg {
 
         var Nv = n_verticesN:int;
         var Ne = n_edgesN:int;
-        var directed = directedN:int;
-        var weighted = weightedN:int;
+        var directed = directedN:int:bool;
+        var weighted = weightedN:int:bool;
         var timer:stopwatch;
 
         var root:int; 
@@ -90,13 +91,7 @@ module BFSMsg {
 
         // Create empty depth array to return at the end of execution. 
         var depth = makeDistArray(Nv, int);
-        coforall loc in Locales  {
-            on loc {
-                forall i in depth.localSubdomain() {
-                    depth[i] = -1;
-                }       
-            }
-        }
+        depth = -1;
 
         /**
         * BFS kernel for undirected graphs. 
@@ -112,14 +107,10 @@ module BFSMsg {
         *
         * returns: message back to Python.
         */
-        proc fo_bag_bfs_kernel_und(nei: [?D1] int, start_i: [?D2] int, src: [?D3] int, dst: [?D4] int, 
+        proc bfs_kernel_und_original(nei: [?D1] int, start_i: [?D2] int, src: [?D3] int, dst: [?D4] int, 
                                 neiR: [?D5] int, start_iR: [?D6] int, srcR: [?D7] int, 
-                                dstR: [?D8] int):string throws {
-            
-            
-            var tmp1: [D1] real;
-            var tmp2: [D1] real;
-            
+                                dstR: [?D8] int):string throws {            
+            depth = -1;
             var cur_level = 0;
             var SetCurF = new DistBag(int, Locales); // use bag to keep the current frontier
             var SetNextF = new DistBag(int, Locales); // use bag to keep the next frontier
@@ -184,6 +175,201 @@ module BFSMsg {
             }// end while 
             return "success";
         }// end of fo_bag_bfs_kernel_u
+        
+        /**
+        * BFS kernel for undirected graphs. 
+        *
+        * nei: neighbor array
+        * start_i: starting edge array location given vertex v
+        * src: source array
+        * dst: destination array
+        * neiR: reversed neighbor array
+        * start_iR: reversed starting edge array location given vertex v
+        * srcR: reversed source array
+        * dstR: reversed destination array
+        *
+        * returns: message back to Python.
+        */
+        proc bfs_kernel_und(nei: [?D1] int, start_i: [?D2] int, src: [?D3] int, dst: [?D4] int, 
+                                neiR: [?D5] int, start_iR: [?D6] int, srcR: [?D7] int, 
+                                dstR: [?D8] int):string throws {            
+            depth = -1;
+            var cur_level = 0;
+            var current_frontier = new DistBag(int, Locales);
+            var next_frontier = new DistBag(int, Locales);
+            current_frontier.add(root);
+            var size_current_frontier = 1 : int;
+            depth[root] = cur_level;
+
+            while (size_current_frontier > 0) { 
+                // var locs = new set(int, parSafe=true);
+                // var locs_size: [0..numLocales-1] atomic int;
+                // var num_local_reg: [0..numLocales-1] atomic int;
+                // var num_local_rev: [0..numLocales-1] atomic int;
+                // locs_size = 0;
+                // num_local_reg = 0;
+                // num_local_rev = 0;
+                // forall u in current_frontier with (ref locs){
+                //     locs.add(here.id);
+                //     locs_size[here.id].add(1);
+                // }
+
+                coforall loc in Locales {
+                    on loc {
+                        var edgeBegin = src.localSubdomain().low;
+                        var edgeEnd = src.localSubdomain().high;
+                        var vertexBegin = src[edgeBegin];
+                        var vertexEnd = src[edgeEnd];
+                        var vertexBeginR = srcR[edgeBegin];
+                        var vertexEndR = srcR[edgeEnd];
+
+                        forall i in current_frontier {
+                            if((xlocal(i, vertexBegin, vertexEnd))) { 
+                                var numNF = nei[i];
+                                var edgeId = start_i[i];
+                                var nextStart = max(edgeId, edgeBegin);
+                                var nextEnd = min(edgeEnd, edgeId + numNF - 1);
+                                // num_local_reg[here.id].add(1);
+                                ref neighborhood = dst[nextStart..nextEnd];
+                                forall j in neighborhood {
+                                    if (depth[j] == -1) {
+                                        depth[j] = cur_level + 1;
+                                        next_frontier.add(j);
+                                    }
+                                }
+                            } 
+                            if ((xlocal(i, vertexBeginR, vertexEndR))) {
+                                var numNF = neiR[i];
+                                var edgeId = start_iR[i];
+                                var nextStart = max(edgeId, edgeBegin);
+                                var nextEnd = min(edgeEnd, edgeId + numNF - 1);
+                                // num_local_rev[here.id].add(1);
+                                ref neighborhoodR = dstR[nextStart..nextEnd];
+                                forall j in neighborhoodR {
+                                    if (depth[j] == -1) {
+                                        depth[j] = cur_level + 1;
+                                        next_frontier.add(j);
+                                    }
+                                }
+                            }
+                        } //end forall
+                    } // end on loc
+                }// end coforall loc
+                // writeln("locs = ", locs, " with size = ", locs_size, " processed vertices reg = ", num_local_reg, " processed vertices rev = ", num_local_rev);
+
+                cur_level += 1;
+                size_current_frontier = next_frontier.size;
+                current_frontier <=> next_frontier;
+                next_frontier.clear();
+            }// end while 
+            return "success";
+        }// end of bfs_kernel_und()
+
+        var NEI = toSymEntry(ag.getComp("NEIGHBOR"), int).a;
+        var START_I = toSymEntry(ag.getComp("START_IDX"), int).a;
+        var SRC = toSymEntry(ag.getComp("SRC"), int).a;
+        var DST = toSymEntry(ag.getComp("DST"), int).a;
+        var NEIR = toSymEntry(ag.getComp("NEIGHBOR_R"), int).a;
+        var START_IR = toSymEntry(ag.getComp("START_IDX_R"), int).a;
+        var SRCR = toSymEntry(ag.getComp("SRC_R"), int).a;
+        var DSTR = toSymEntry(ag.getComp("DST_R"), int).a;
+
+        var neighbor_complete: [NEI.domain] list(int, parSafe=true);
+        
+        forall u in NEI.domain {
+            var start = START_I[u];
+            var end = start + NEI[u];
+
+            ref neighborhood = DST[start..end-1];
+
+            forall v in neighborhood {
+                neighbor_complete[u].append(v);
+            }
+        }
+
+        forall u in NEIR.domain {
+            var start = START_IR[u];
+            var end = start + NEIR[u];
+
+            ref neighborhoodR = DSTR[start..end-1];
+
+            forall v in neighborhoodR {
+                neighbor_complete[u].append(v);
+            }
+        }
+
+        // writeln(neighbor_complete);
+
+        proc bfs_kernel_und_opt(nei: [?D1] int, start_i: [?D2] int, src: [?D3] int, dst: [?D4] int, 
+                                neiR: [?D5] int, start_iR: [?D6] int, srcR: [?D7] int, 
+                                dstR: [?D8] int):string throws {            
+            depth = -1;
+            var cur_level = 0;
+            var current_frontier = new DistBag(int, Locales);
+            var next_frontier = new DistBag(int, Locales);
+            current_frontier.add(root);
+            var size_current_frontier = 1 : int;
+            depth[root] = cur_level;
+
+            while (size_current_frontier > 0) { 
+                // var locs = new set(int, parSafe=true);
+                // var locs_size: [0..numLocales-1] atomic int;
+                // var num_local_reg: [0..numLocales-1] atomic int;
+                // var num_local_rev: [0..numLocales-1] atomic int;
+                // locs_size = 0;
+                // num_local_reg = 0;
+                // num_local_rev = 0;
+                // forall u in current_frontier with (ref locs){
+                //     locs.add(here.id);
+                //     locs_size[here.id].add(1);
+                // }
+
+                coforall loc in Locales {
+                    on loc {
+                        var vertexBegin = nei.localSubdomain().low;
+                        var vertexEnd = nei.localSubdomain().high;
+
+                        forall i in current_frontier {
+                            if((xlocal(i, vertexBegin, vertexEnd))) { 
+                                // var numNF = nei[i];
+                                // var edgeId = start_i[i];
+                                // var nextStart = max(edgeId, edgeBegin);
+                                // var nextEnd = min(edgeEnd, edgeId + numNF - 1);
+                                // num_local_reg[here.id].add(1);
+                                ref neighborhood = neighbor_complete[i];
+                                forall j in neighborhood {
+                                    if (depth[j] == -1) {
+                                        depth[j] = cur_level + 1;
+                                        next_frontier.add(j);
+                                    }
+                                }
+                            } 
+                            // if ((xlocal(i, vertexBeginR, vertexEndR))) {
+                            //     var numNF = neiR[i];
+                            //     var edgeId = start_iR[i];
+                            //     var nextStart = max(edgeId, edgeBegin);
+                            //     var nextEnd = min(edgeEnd, edgeId + numNF - 1);
+                            //     // num_local_rev[here.id].add(1);
+                            //     ref neighborhoodR = dstR[nextStart..nextEnd];
+                            //     forall j in neighborhoodR {
+                            //         if (depth[j] == -1) {
+                            //             depth[j] = cur_level + 1;
+                            //             next_frontier.add(j);
+                            //         }
+                            //     }
+                            // }
+                        } //end forall
+                    } // end on loc
+                }// end coforall loc
+                // writeln("locs = ", locs, " with size = ", locs_size, " processed vertices reg = ", num_local_reg, " processed vertices rev = ", num_local_rev);
+
+                cur_level += 1;
+                size_current_frontier = next_frontier.size;
+                current_frontier <=> next_frontier;
+                next_frontier.clear();
+            }// end while 
+            return "success";
+        }// end of bfs_kernel_und_opt()
 
         /**
         * BFS kernel for directed graphs. 
@@ -195,65 +381,46 @@ module BFSMsg {
         *
         * returns: message back to Python.
         */
-        proc fo_bag_bfs_kernel_dir( nei: [?D1] int, start_i: [?D2] int, src: [?D3] int, 
+        proc bfs_kernel_dir( nei: [?D1] int, start_i: [?D2] int, src: [?D3] int, 
                                   dst: [?D4] int): string throws {
+            depth = -1;
             var cur_level = 0;
-            var SetCurF = new DistBag(int, Locales); // use bag to keep the current frontier
-            var SetNextF = new DistBag(int, Locales); // use bag to keep the next frontier
-            SetCurF.add(root);
-            var numCurF = 1 : int;
-            var topdown = 0 : int;
-            var bottomup = 0 : int;
+            var current_frontier = new DistBag(int, Locales);
+            var next_frontier = new DistBag(int, Locales);
+            current_frontier.add(root);
+            var size_current_frontier = 1 : int;
+            depth[root] = cur_level;
 
-            while (numCurF>0) {
-                coforall loc in Locales  with (ref SetNextF, + reduce topdown, + reduce bottomup) {
+            while (size_current_frontier > 0) {
+               coforall loc in Locales  with (ref next_frontier) {
                     on loc {
-                        ref srcf=src;
-                        ref df=dst;
-                        ref nf=nei;
-                        ref sf=start_i;
-
                         var edgeBegin = src.localSubdomain().low;
                         var edgeEnd = src.localSubdomain().high;
                         var vertexBegin = src[edgeBegin];
                         var vertexEnd = src[edgeEnd];
-                        forall i in SetCurF with (ref SetNextF) {
-                            if ((xlocal(i, vertexBegin, vertexEnd))) { // current edge has the vertex
-                                var numNF = nf[i];
-                                var edgeId = sf[i];
+
+                        forall i in current_frontier with (ref next_frontier) {
+                            if((xlocal(i, vertexBegin, vertexEnd))) { 
+                                var numNF = nei[i];
+                                var edgeId = start_i[i];
                                 var nextStart = max(edgeId, edgeBegin);
                                 var nextEnd = min(edgeEnd, edgeId + numNF - 1);
-                                ref NF = df[nextStart..nextEnd];
-                                forall j in NF with (ref SetNextF) {
+                                ref neighborhood = dst[nextStart..nextEnd];
+                                forall j in neighborhood with (ref next_frontier){
                                     if (depth[j] == -1) {
                                         depth[j] = cur_level + 1;
-                                        SetNextF.add(j);
-                                    }
-                                }
-                            } 
-                        } // end forall
-                        forall i in vertexBegin..vertexEnd with (ref SetNextF) {
-                            if depth[i] == -1 {
-                                var numNF = nf[i];
-                                var edgeId = sf[i];
-                                var nextStart = max(edgeId, edgeBegin);
-                                var nextEnd = min(edgeEnd, edgeId + numNF - 1);
-                                ref NF = df[nextStart..nextEnd];
-                                forall j in NF with (ref SetNextF){
-                                    if (SetCurF.contains(j)) {
-                                        depth[i] = cur_level + 1;
-                                        SetNextF.add(i);
+                                        next_frontier.add(j);
                                     }
                                 }
                             }
-                        }
+                        } //end forall
                     } // end on loc
-                } // end coforall loc
+                }// end coforall loc
                 cur_level += 1;
-                numCurF = SetNextF.getSize();
-                SetCurF <=> SetNextF;
-                SetNextF.clear();
-            }//end while  
+                size_current_frontier = next_frontier.size;
+                current_frontier <=> next_frontier;
+                next_frontier.clear();
+            }// end while 
             return "success";
         }//end of fo_bag_bfs_kernel_d
 
@@ -271,7 +438,7 @@ module BFSMsg {
         }
 
         if(directed) {
-            fo_bag_bfs_kernel_dir(
+            bfs_kernel_dir(
                 toSymEntry(ag.getComp("NEIGHBOR"), int).a,
                 toSymEntry(ag.getComp("START_IDX"), int).a,
                 toSymEntry(ag.getComp("SRC"), int).a,
@@ -279,16 +446,42 @@ module BFSMsg {
             );
             repMsg=return_depth();
         } else {
-            fo_bag_bfs_kernel_und(
-                toSymEntry(ag.getComp("NEIGHBOR"), int).a,
-                toSymEntry(ag.getComp("START_IDX"), int).a,
-                toSymEntry(ag.getComp("SRC"), int).a,
-                toSymEntry(ag.getComp("DST"), int).a,
-                toSymEntry(ag.getComp("NEIGHBOR_R"), int).a,
-                toSymEntry(ag.getComp("START_IDX_R"), int).a,
-                toSymEntry(ag.getComp("SRC_R"), int).a,
-                toSymEntry(ag.getComp("DST_R"), int).a
-            );
+            var timer:stopwatch;
+            var times: [0..9] real;
+            for t in times {
+                timer.start();
+                bfs_kernel_und(
+                    toSymEntry(ag.getComp("NEIGHBOR"), int).a,
+                    toSymEntry(ag.getComp("START_IDX"), int).a,
+                    toSymEntry(ag.getComp("SRC"), int).a,
+                    toSymEntry(ag.getComp("DST"), int).a,
+                    toSymEntry(ag.getComp("NEIGHBOR_R"), int).a,
+                    toSymEntry(ag.getComp("START_IDX_R"), int).a,
+                    toSymEntry(ag.getComp("SRC_R"), int).a,
+                    toSymEntry(ag.getComp("DST_R"), int).a
+                );
+                timer.stop();
+                t = timer.elapsed();
+                timer.clear();
+            }
+            writeln("$$$$$$$$$$ Original BFS time elapsed = ", (+ reduce times) / times.size);
+            for t in times {
+                timer.start();
+                bfs_kernel_und_opt(
+                    toSymEntry(ag.getComp("NEIGHBOR"), int).a,
+                    toSymEntry(ag.getComp("START_IDX"), int).a,
+                    toSymEntry(ag.getComp("SRC"), int).a,
+                    toSymEntry(ag.getComp("DST"), int).a,
+                    toSymEntry(ag.getComp("NEIGHBOR_R"), int).a,
+                    toSymEntry(ag.getComp("START_IDX_R"), int).a,
+                    toSymEntry(ag.getComp("SRC_R"), int).a,
+                    toSymEntry(ag.getComp("DST_R"), int).a
+                );
+                timer.stop();
+                t = timer.elapsed();
+                timer.clear();
+            }
+            writeln("$$$$$$$$$$ Optimal BFS time elapsed = ", (+ reduce times) / times.size);
             repMsg=return_depth();
         }
         smLogger.debug(getModuleName(),getRoutineName(),getLineNumber(),repMsg);
