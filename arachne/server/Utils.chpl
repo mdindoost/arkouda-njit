@@ -37,12 +37,8 @@ module Utils {
     */
     proc set_neighbor(lsrc: [?D1] int, lstart_i: [?D2] int, lneighbor: [?D3] int) { 
         var Ne = D1.size;
-        forall i in lstart_i {
-            i = -1;
-        }
-        forall i in lneighbor {
-            i = 0;
-        }
+        lstart_i = -1;
+        lneighbor = 0;
         for i in 0..Ne-1 do {
             lneighbor[lsrc[i]] += 1;
             if (lstart_i[lsrc[i]] == -1) {
