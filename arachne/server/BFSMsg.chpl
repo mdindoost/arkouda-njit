@@ -372,6 +372,83 @@ module BFSMsg {
             return "success";
         }// end of bfs_kernel_und_concatenate
 
+        proc bfs_kernel_und_cobegin(nei: [?D1] int, start_i: [?D2] int, src: [?D3] int, dst: [?D4] int, 
+                                neiR: [?D5] int, start_iR: [?D6] int, srcR: [?D7] int, 
+                                dstR: [?D8] int):string throws {            
+            depth = -1;
+            var cur_level = 0;
+            var current_frontier = new DistBag(int, Locales);
+            var next_frontier = new DistBag(int, Locales);
+            current_frontier.add(root);
+            var size_current_frontier = 1 : int;
+            depth[root] = cur_level;
+
+            while (size_current_frontier > 0) { 
+                // var locs = new set(int, parSafe=true);
+                // var locs_size: [0..numLocales-1] atomic int;
+                // var num_local_reg: [0..numLocales-1] atomic int;
+                // var num_local_rev: [0..numLocales-1] atomic int;
+                // locs_size = 0;
+                // num_local_reg = 0;
+                // num_local_rev = 0;
+                // forall u in current_frontier with (ref locs){
+                //     locs.add(here.id);
+                //     locs_size[here.id].add(1);
+                // }
+
+                coforall loc in Locales {
+                    on loc {
+                        var edgeBegin = src.localSubdomain().low;
+                        var edgeEnd = src.localSubdomain().high;
+                        var vertexBegin = src[edgeBegin];
+                        var vertexEnd = src[edgeEnd];
+                        var vertexBeginR = srcR[edgeBegin];
+                        var vertexEndR = srcR[edgeEnd];
+
+                        forall i in current_frontier {
+                            cobegin {
+                                if((xlocal(i, vertexBegin, vertexEnd))) { 
+                                    var numNF = nei[i];
+                                    var edgeId = start_i[i];
+                                    var nextStart = max(edgeId, edgeBegin);
+                                    var nextEnd = min(edgeEnd, edgeId + numNF - 1);
+                                    // num_local_reg[here.id].add(1);
+                                    ref neighborhood = dst[nextStart..nextEnd];
+                                    forall j in neighborhood {
+                                        if (depth[j] == -1) {
+                                            depth[j] = cur_level + 1;
+                                            next_frontier.add(j);
+                                        }
+                                    }
+                                } 
+                                if ((xlocal(i, vertexBeginR, vertexEndR))) {
+                                    var numNF = neiR[i];
+                                    var edgeId = start_iR[i];
+                                    var nextStart = max(edgeId, edgeBegin);
+                                    var nextEnd = min(edgeEnd, edgeId + numNF - 1);
+                                    // num_local_rev[here.id].add(1);
+                                    ref neighborhoodR = dstR[nextStart..nextEnd];
+                                    forall j in neighborhoodR {
+                                        if (depth[j] == -1) {
+                                            depth[j] = cur_level + 1;
+                                            next_frontier.add(j);
+                                        }
+                                    }
+                                }
+                            }
+                        } //end forall
+                    } // end on loc
+                }// end coforall loc
+                // writeln("locs = ", locs, " with size = ", locs_size, " processed vertices reg = ", num_local_reg, " processed vertices rev = ", num_local_rev);
+
+                cur_level += 1;
+                size_current_frontier = next_frontier.size;
+                current_frontier <=> next_frontier;
+                next_frontier.clear();
+            }// end while 
+            return "success";
+        }// end of bfs_kernel_und_cobegin
+
         /* BUILD A VERTEX-PARTITIONED GRAPH TO STORE NEIGHBORHOODS FULLY ON ONE NODE */
         var NEI = toSymEntry(ag.getComp("NEIGHBOR"), int).a;
         var START_I = toSymEntry(ag.getComp("START_IDX"), int).a;
@@ -724,7 +801,7 @@ module BFSMsg {
             for t in times {
                 timer.start();
                 if it == size - 1 then startCommDiagnostics();
-                bfs_kernel_und_neighbor_complete(
+                bfs_kernel_und_cobegin(
                     toSymEntry(ag.getComp("NEIGHBOR"), int).a,
                     toSymEntry(ag.getComp("START_IDX"), int).a,
                     toSymEntry(ag.getComp("SRC"), int).a,
@@ -741,6 +818,32 @@ module BFSMsg {
                 it += 1;
             }
             var depth3 = depth;
+            writeln("$$$$$$$$$$ Neighbor cobegin BFS time elapsed = ", (+ reduce times) / times.size);
+            printCommDiagnosticsTable();
+            writeln();
+            resetCommDiagnostics();
+
+            it = 0;
+            for t in times {
+                timer.start();
+                if it == size - 1 then startCommDiagnostics();
+                bfs_kernel_und_neighbor_complete(
+                    toSymEntry(ag.getComp("NEIGHBOR"), int).a,
+                    toSymEntry(ag.getComp("START_IDX"), int).a,
+                    toSymEntry(ag.getComp("SRC"), int).a,
+                    toSymEntry(ag.getComp("DST"), int).a,
+                    toSymEntry(ag.getComp("NEIGHBOR_R"), int).a,
+                    toSymEntry(ag.getComp("START_IDX_R"), int).a,
+                    toSymEntry(ag.getComp("SRC_R"), int).a,
+                    toSymEntry(ag.getComp("DST_R"), int).a
+                );
+                timer.stop();
+                if it == size - 1 then stopCommDiagnostics();
+                t = timer.elapsed();
+                timer.clear();
+                it += 1;
+            }
+            var depth4 = depth;
             writeln("$$$$$$$$$$ Neighbor complete BFS time elapsed = ", (+ reduce times) / times.size);
             printCommDiagnosticsTable();
             writeln();
@@ -766,7 +869,7 @@ module BFSMsg {
                 timer.clear();
                 it += 1;
             }
-            var depth4 = depth;
+            var depth5 = depth;
             writeln("$$$$$$$$$$ Complete array BFS time elapsed = ", (+ reduce times) / times.size);
             printCommDiagnosticsTable();
             writeln();
