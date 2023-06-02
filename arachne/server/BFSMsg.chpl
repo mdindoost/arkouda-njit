@@ -61,6 +61,96 @@ module BFSMsg {
         return !xlocal(x, low, high);
     }
 
+    // Declare our frontier queues here to be sets, done globally. 
+    var D_util = {0..1} dmapped Replicated();
+    var queues : [D_util] set(int, parSafe=true);
+    var queueIdx : int;
+
+    const dstBuffSize = getEnvInt("CHPL_AGGREGATION_DST_BUFF_SIZE", 4096);
+    const yieldFrequency = getEnvInt("CHPL_AGGREGATION_YIELD_FREQUENCY", 1024);
+
+    /**
+    * Record for remote set aggregator to perform various parallel set additions when buffer
+    * is full. Built from a combination of the Arkouda aggregator and Thomas Rolinger's 
+    * aggregator.
+    */
+    record SetDstAggregator {
+        type elemType;
+        type aggType = elemType;
+        const bufferSize = dstBuffSize;
+        const myLocaleSpace = LocaleSpace;
+        var opsUntilYield = yieldFrequency;
+        var lBuffers: [myLocaleSpace] [0..#bufferSize] aggType;
+        var rBuffers: [myLocaleSpace] remoteBuffer(aggType);
+        var bufferIdxs: [myLocaleSpace] int;
+
+        proc postinit() {
+            for loc in myLocaleSpace {
+                rBuffers[loc] = new remoteBuffer(aggType, bufferSize, loc);
+            }
+        }
+    
+        proc deinit() {
+            flush();
+        }
+
+        proc flush() {
+            for loc in myLocaleSpace {
+                _flushBuffer(loc, bufferIdxs[loc], freeData=true);
+            }
+        }
+
+        inline proc copy(const loc, const in srcVal: elemType) {
+            // Get our current index into the buffer for dst's locale
+            ref bufferIdx = bufferIdxs[loc];
+
+            // Buffer the address and desired value
+            lBuffers[loc][bufferIdx] = srcVal;
+            bufferIdx += 1;
+
+            // Flush our buffer if it's full. If it's been a while since we've let
+            // other tasks run, yield so that we're not blocking remote tasks from
+            // flushing their buffers.
+            if bufferIdx == bufferSize {
+                _flushBuffer(loc, bufferIdx, freeData=false);
+                opsUntilYield = yieldFrequency;
+            } else if opsUntilYield == 0 {
+                chpl_task_yield();
+                opsUntilYield = yieldFrequency;
+            } else {
+                opsUntilYield -= 1;
+            }
+        }
+
+        proc _flushBuffer(loc: int, ref bufferIdx, freeData) {
+            // Get the buffer id to extract the buffered info.
+            const myBufferIdx = bufferIdx;
+            if myBufferIdx == 0 then return;
+
+            // Allocate a remote buffer
+            ref rBuffer = rBuffers[loc];
+            const remBufferPtr = rBuffer.cachedAlloc();
+
+            // Copy local buffer to remote buffer
+            rBuffer.PUT(lBuffers[loc], myBufferIdx);
+
+            // Process remote buffer
+            on Locales[loc] {
+                ref q = queues[(queueIdx+1)%2];
+                for srcVal in rBuffer.localIter(remBufferPtr, myBufferIdx) { /* forall gives error: A standalone or leader iterator is not found for the iterable expression in this forall loop */
+                    q.add(srcVal);
+                }
+                if freeData {
+                    rBuffer.localFree(remBufferPtr);
+                }
+            }
+            if freeData {
+                rBuffer.markFreed();
+            }
+            bufferIdx = 0;
+        }
+    } // end of SetDstAggregator
+
     /**
     * Run BFS on a(n) (un)directed and (un)weighted graph. 
     *
@@ -329,7 +419,7 @@ module BFSMsg {
             var start = START_I[u];
             var end = start + NEI[u];
 
-            ref neighborhood = DST[start..end-1];
+            ref neighborhood = DST[start..<end];
 
             forall v in neighborhood {
                 neighbor_complete[u].append(v);
@@ -340,7 +430,7 @@ module BFSMsg {
             var start = START_IR[u];
             var end = start + NEIR[u];
 
-            ref neighborhoodR = DSTR[start..end-1];
+            ref neighborhoodR = DSTR[start..<end];
 
             forall v in neighborhoodR {
                 neighbor_complete[u].append(v);
@@ -351,16 +441,23 @@ module BFSMsg {
         var SRC_COMPLETE = makeDistArray(SRC.size + DST.size, int);
         var DST_COMPLETE: [SRC_COMPLETE.domain] int;
         
-        forall i in SRC.domain { 
-            SRC_COMPLETE[i] = SRC[i];
-            DST_COMPLETE[i] = DST[i];
-        }
-        var final_i_start = SRC.size;
-        var final_i_end = final_i_start + SRC.size;
-        for (i,j) in zip(final_i_start..final_i_end, SRC.domain) {
-            SRC_COMPLETE[i] = DST[j];
-            DST_COMPLETE[i] = SRC[j];
-        }
+        // forall i in SRC.domain { 
+        //     SRC_COMPLETE[i] = SRC[i];
+        //     DST_COMPLETE[i] = DST[i];
+        // }
+        SRC_COMPLETE[SRC.domain] = SRC;
+        DST_COMPLETE[SRC.domain] = DST;
+
+        // var final_i_start = SRC.size;
+        // var final_i_end = final_i_start + SRC.size;
+        // for (i,j) in zip(final_i_start..final_i_end, SRC.domain) {
+        //     SRC_COMPLETE[i] = DST[j];
+        //     DST_COMPLETE[i] = SRC[j];
+        // }
+        SRC_COMPLETE[SRC.size..] = DST;
+        DST_COMPLETE[SRC.size..] = SRC;
+
+
         var e_weight: [SRC_COMPLETE.domain] real;
         combine_sort(SRC_COMPLETE, DST_COMPLETE, e_weight, false, false);
 
@@ -446,8 +543,7 @@ module BFSMsg {
                                 var edgeId = START_I_COMPLETE[i];
                                 var nextStart = max(edgeId, edgeBegin);
                                 var nextEnd = min(edgeEnd, edgeId + numNF - 1);
-                                // num_local_reg[here.id].add(1);
-                                ref neighborhood = DST_COMPLETE[nextStart..nextEnd];
+                                ref neighborhood = DST_COMPLETE.localSlice(nextStart..nextEnd);
                                 forall j in neighborhood {
                                     if (depth[j] == -1) {
                                         depth[j] = cur_level + 1;
@@ -469,96 +565,6 @@ module BFSMsg {
         /**************************************/
         /* REMOTE DST AGGREGATOR METHOD BELOW */
         /**************************************/
-
-        // Declare our frontier queues here to be sets, done globally. 
-        var D_util = {0..1} dmapped Replicated();
-        var queues : [D_util] set(int, parSafe=true);
-        var queueIdx : int;
-
-        const dstBuffSize = getEnvInt("CHPL_AGGREGATION_DST_BUFF_SIZE", 4096);
-        const yieldFrequency = getEnvInt("CHPL_AGGREGATION_YIELD_FREQUENCY", 1024);
-        
-        /**
-        * Record for remote set aggregator to perform various parallel set additions when buffer
-        * is full. Built from a combination of the Arkouda aggregator and Thomas Rolinger's 
-        * aggregator.
-        */
-        record SetDstAggregator {
-            type elemType;
-            type aggType = elemType;
-            const bufferSize = dstBuffSize;
-            const myLocaleSpace = LocaleSpace;
-            var opsUntilYield = yieldFrequency;
-            var lBuffers: [myLocaleSpace] [0..#bufferSize] aggType;
-            var rBuffers: [myLocaleSpace] remoteBuffer(aggType);
-            var bufferIdxs: [myLocaleSpace] int;
-
-            proc postinit() {
-                for loc in myLocaleSpace {
-                    rBuffers[loc] = new remoteBuffer(aggType, bufferSize, loc);
-                }
-            }
-        
-            proc deinit() {
-                flush();
-            }
-
-            proc flush() {
-                for loc in myLocaleSpace {
-                    _flushBuffer(loc, bufferIdxs[loc], freeData=true);
-                }
-            }
-
-            inline proc copy(const loc, const in srcVal: elemType) {
-                // Get our current index into the buffer for dst's locale
-                ref bufferIdx = bufferIdxs[loc];
-
-                // Buffer the address and desired value
-                lBuffers[loc][bufferIdx] = srcVal;
-                bufferIdx += 1;
-
-                // Flush our buffer if it's full. If it's been a while since we've let
-                // other tasks run, yield so that we're not blocking remote tasks from
-                // flushing their buffers.
-                if bufferIdx == bufferSize {
-                    _flushBuffer(loc, bufferIdx, freeData=false);
-                    opsUntilYield = yieldFrequency;
-                } else if opsUntilYield == 0 {
-                    chpl_task_yield();
-                    opsUntilYield = yieldFrequency;
-                } else {
-                    opsUntilYield -= 1;
-                }
-            }
-
-            proc _flushBuffer(loc: int, ref bufferIdx, freeData) {
-                // Get the buffer id to extract the buffered info.
-                const myBufferIdx = bufferIdx;
-                if myBufferIdx == 0 then return;
-
-                // Allocate a remote buffer
-                ref rBuffer = rBuffers[loc];
-                const remBufferPtr = rBuffer.cachedAlloc();
-
-                // Copy local buffer to remote buffer
-                rBuffer.PUT(lBuffers[loc], myBufferIdx);
-
-                // Process remote buffer
-                on Locales[loc] {
-                    ref q = queues[(queueIdx+1)%2];
-                    for srcVal in rBuffer.localIter(remBufferPtr, myBufferIdx) { /* forall gives error: A standalone or leader iterator is not found for the iterable expression in this forall loop */
-                        q.add(srcVal);
-                    }
-                    if freeData {
-                        rBuffer.localFree(remBufferPtr);
-                    }
-                }
-                if freeData {
-                    rBuffer.markFreed();
-                }
-                bufferIdx = 0;
-            }
-        }
 
         // Create global array to track the low subdomain of each locale so we know what locale
         // we must write the next frontier to. 
@@ -583,7 +589,7 @@ module BFSMsg {
         proc find_locs(val:int) {
             var locs = new list(locale, parSafe=true);
             for i in 1..numLocales - 1 {
-                if (val >= ranges[i-1][0] && val < ranges[i][0]) {
+                if (val >= ranges[i-1][0] && val <= ranges[i][0]) {
                     locs.append(ranges[i-1][1]);
                 }
                 if (i == numLocales - 1) {
@@ -624,34 +630,51 @@ module BFSMsg {
             var size_current_frontier:int = 1;
             depth[root] = cur_level;
 
-            while (size_current_frontier > 0) { 
-                coforall loc in Locales {
+            // coforall loc in Locales do on loc  {
+            //     writeln("SRC_COMPLETE on loc ", loc, " = ", SRC_COMPLETE[SRC_COMPLETE.localSubdomain()]);
+            // }
+            // writeln();
+            // coforall loc in Locales do on loc  {
+            //     writeln("DST_COMPLETE on loc ", loc, " = ", DST_COMPLETE[DST_COMPLETE.localSubdomain()]);
+            // }
+            // writeln();
+
+            while true { 
+                var pending_work:bool;
+                coforall loc in Locales with(|| reduce pending_work) {
                     on loc {
                         var edgeBegin = SRC_COMPLETE.localSubdomain().low;
                         var edgeEnd = SRC_COMPLETE.localSubdomain().high;
                         var vertexBegin = SRC_COMPLETE[edgeBegin];
                         var vertexEnd = SRC_COMPLETE[edgeEnd];
-                        forall i in queues[queueIdx] /* with (var agg = new SetDstAggregator(int)) */{
+                        // writeln("queue on ", loc, " = ", queues[queueIdx]);
+                        forall i in queues[queueIdx] with (|| reduce pending_work, var agg = new SetDstAggregator(int)) {
                             var numNF = NEI_COMPLETE[i];
                             var edgeId = START_I_COMPLETE[i];
                             var nextStart = max(edgeId, edgeBegin);
                             var nextEnd = min(edgeEnd, edgeId + numNF - 1);
-                            ref neighborhood = DST_COMPLETE[nextStart..nextEnd];
+                            ref neighborhood = DST_COMPLETE.localSlice(nextStart..nextEnd); // one way to improve performance is local slice
                             for j in neighborhood { /* can be forall? */
                                 if (depth[j] == -1) {
+                                    pending_work = true;
                                     depth[j] = cur_level + 1;
-                                    // var locs = find_locs(j);
-                                    // for lc in locs {
-                                    //     agg.copy(lc.id, j); /* aggregator overall gives error: internal error: RES-LAT-ECK-0652 chpl version 1.30.0 */
-                                    // }
+                                    var locs = find_locs(j);
+                                    for lc in locs {
+                                        agg.copy(lc.id, j); /* aggregator overall gives error: internal error: RES-LAT-ECK-0652 chpl version 1.30.0 */
+                                    }
                                 }
                             }
                         } //end forall
+                        queues[queueIdx].clear();
                     } // end on loc
                 }// end coforall loc
+                // writeln("depth = ", depth);
+                // writeln();
+                if !pending_work {
+                    break;
+                }
                 cur_level += 1;
                 queueIdx = (queueIdx+1)%2;
-                size_current_frontier = queues[queueIdx].size;
             }// end while 
             return "success";
         }// end of bfs_kernel_coarse_writes
@@ -830,7 +853,7 @@ module BFSMsg {
             resetCommDiagnostics();
 
             var error = false;
-            for (i,j,k,l,m/*,n*/) in zip(depth1, depth2, depth3, depth4, depth5/*, depth6*/) {
+            for (i,j,k,l,m,n) in zip(depth1, depth2, depth3, depth4, depth5, depth6) {
                 if error {
                     writeln("ERROR! DEPTHS DO NOT MATCH UP.");
                     break;
@@ -840,7 +863,7 @@ module BFSMsg {
                 if(i != k) then error = true;
                 if(i != l) then error = true;
                 if(i != m) then error = true;
-                /*if(i != n) then error = true;*/
+                if(i != n) then error = true;
             }
             repMsg=return_depth();
         }
