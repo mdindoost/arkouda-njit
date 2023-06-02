@@ -13,6 +13,7 @@ __all__ = ["Graph",
            "read_known_edgelist",
            "read_edgelist",
            "bfs_layers",
+           "bfs_layers_agg",
            "subgraph_view",
            "triangles",
            "triangle_centrality",
@@ -664,6 +665,37 @@ def bfs_layers(graph: Graph, source: int) -> pdarray:
     RuntimeError
     """
     cmd = "segmentedGraphBFS"
+    args = { "NumOfVertices":graph.n_vertices,
+             "NumOfEdges":graph.n_edges,
+             "Directed":graph.directed,
+             "Weighted":graph.weighted,
+             "GraphName":graph.name,
+             "Source":source}
+
+    repMsg = generic_msg(cmd=cmd, args=args)
+    return create_pdarray(repMsg)
+
+@typechecked
+def bfs_layers_agg(graph: Graph, source: int) -> pdarray:
+    """ This function generates the breadth-first search sequence of the vertices in a given graph
+    starting from the given source vertex.
+        
+    Returns
+    -------
+    pdarray
+        The depth of each vertex in relation to the source vertex. 
+    
+    See Also
+    --------
+    
+    Notes
+    -----
+    
+    Raises
+    ------  
+    RuntimeError
+    """
+    cmd = "segmentedGraphBFSagg"
     args = { "NumOfVertices":graph.n_vertices,
              "NumOfEdges":graph.n_edges,
              "Directed":graph.directed,
