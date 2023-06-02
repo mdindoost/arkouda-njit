@@ -138,8 +138,8 @@ module BFSAggMsg {
         var D_sbdmn = {0..numLocales-1} dmapped Replicated();
         var ranges : [D_sbdmn] (int,locale);
 
-        // Write the local subdomain low value to the sizes array include the locale that owns that
-        // particular range. 
+        /**
+        * Write the local subdomain low value to the ranges array. */
         coforall loc in Locales {
             on loc {
                 var lowVertex = SRC_COMPLETE[SRC_COMPLETE.localSubdomain().low];
@@ -152,7 +152,12 @@ module BFSAggMsg {
             }
         }
 
-        // Helper procedure to parse ranges and return the locale we must write to.
+        /** 
+        * Helper procedure to parse ranges and return the locale we must write to.
+        * 
+        * val: value for which we want to find the locale that owns it. 
+        * 
+        * returns: array of the locale names. */
         proc find_locs(val:int) {
             var locs = new list(locale, parSafe=true);
             for i in 1..numLocales - 1 {
@@ -230,8 +235,12 @@ module BFSAggMsg {
                 frontier_sets_idx = (frontier_sets_idx + 1) % 2;
             }// end while 
             return "success";
-        }// end of bfs_kernel_agg
+        }// end of bfs_kernel_und_agg
 
+        /** 
+        * Adds the depth array to the symbol table and creates reply message.
+        *
+        * returns: reply message. */
         proc return_depth(): string throws{
             var depthName = st.nextName();
             var depthEntry = new shared SymEntry(depth);
@@ -241,11 +250,11 @@ module BFSAggMsg {
             return depMsg;
         }
 
+        // Benchmarking code begins.
         var timer:stopwatch;
         var size = 10;
         var times: [0..size-1] real;
         var it = 0;
-
         for t in times {
             timer.start();
             if it == size - 1 then startCommDiagnostics();
@@ -260,6 +269,7 @@ module BFSAggMsg {
         printCommDiagnosticsTable();
         writeln();
         resetCommDiagnostics();
+        // Benchmarking code ends.
 
         repMsg=return_depth();
         smLogger.debug(getModuleName(),getRoutineName(),getLineNumber(),repMsg);
