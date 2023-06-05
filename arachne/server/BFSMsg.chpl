@@ -471,6 +471,118 @@ module BFSMsg {
             return "success";
         }// end of bfs_kernel_und_norev
 
+        // Create global array to track the low subdomain of each locale so we know what locale
+        // we must write the next frontier to. 
+        var D_sbdmn = {0..numLocales-1} dmapped Replicated();
+        var ranges : [D_sbdmn] (int,locale);
+
+        /**
+        * Write the local subdomain low value to the ranges array. */
+        coforall loc in Locales {
+            on loc {
+                var lowVertex = SRC_COMPLETE[SRC_COMPLETE.localSubdomain().low];
+
+                coforall rloc in Locales { 
+                    on rloc {
+                        ranges[loc.id] = (lowVertex,loc);
+                    }
+                }
+            }
+        }
+
+        /** 
+        * Helper procedure to parse ranges and return the locale we must write to.
+        * 
+        * val: value for which we want to find the locale that owns it. 
+        * 
+        * returns: array of the locale names. */
+        proc find_locs(val:int) {
+            var locs = new list(locale, parSafe=true);
+            for i in 1..numLocales - 1 {
+                if (val >= ranges[i-1][0] && val <= ranges[i][0]) {
+                    locs.append(ranges[i-1][1]);
+                }
+                if (i == numLocales - 1) {
+                    if val >= ranges[i][0] {
+                        locs.append(ranges[i][1]);
+                    }
+                }
+            }
+            return locs.toArray();
+        }
+
+        /** 
+        * Using the remote aggregator above for sets, we are going to perform aggregated writes to the
+        * locales that include a sliver of the neighborhood. 
+        *
+        * graph: graph to run bfs on. 
+        *
+        * returns: success string message. */
+        proc bfs_kernel_und_agg(graph: SegGraph):string throws {
+            // Initialize the frontiers on each of the locales.
+            coforall loc in Locales do on loc {
+                frontier_sets[0] = new set(int, parSafe=true);
+                frontier_sets[1] = new set(int, parSafe=true);
+            } 
+            frontier_sets_idx = 0;
+            
+            // Add the root to the locale that owns it and update size & depth.
+            for lc in find_locs(root) {
+                on lc do frontier_sets[frontier_sets_idx].add(root);
+            }
+            depth = -1;
+            var cur_level = 0;
+            depth[root] = cur_level;
+
+            // for loc in Locales do on loc  {
+            //     writeln("SRC_COMPLETE on loc ", loc, " = ", SRC_COMPLETE[SRC_COMPLETE.localSubdomain()]);
+            //     writeln("DST_COMPLETE on loc ", loc, " = ", DST_COMPLETE[DST_COMPLETE.localSubdomain()]);
+            //     writeln("ranges = ", ranges);
+            //     writeln();
+            // }
+            // writeln();
+
+            while true { 
+                var pending_work:bool;
+                coforall loc in Locales with(|| reduce pending_work) {
+                    on loc {
+                        var edgeBegin = SRC_COMPLETE.localSubdomain().low;
+                        var edgeEnd = SRC_COMPLETE.localSubdomain().high;
+                        var vertexBegin = SRC_COMPLETE[edgeBegin];
+                        var vertexEnd = SRC_COMPLETE[edgeEnd];
+                        // writeln("frontier on ", loc, " = ", frontier_sets[frontier_sets_idx]);
+                        forall i in frontier_sets[frontier_sets_idx] with (|| reduce pending_work, var agg = new SetDstAggregator(int)) {
+                            var numNF = NEI_COMPLETE[i];
+                            var edgeId = START_I_COMPLETE[i];
+                            var nextStart = max(edgeId, edgeBegin);
+                            var nextEnd = min(edgeEnd, edgeId + numNF - 1);
+                            ref neighborhood = DST_COMPLETE.localSlice(nextStart..nextEnd);
+                            // TODO: forall possibly? Gives error since agg has to be passed.
+                            for j in neighborhood { 
+                                if (depth[j] == -1) {
+                                    pending_work = true;
+                                    depth[j] = cur_level + 1;
+                                    var locs = find_locs(j);
+                                    for lc in locs {
+                                        agg.copy(lc.id, j);
+                                    }
+                                }
+                            }
+                        } //end forall
+                        frontier_sets[frontier_sets_idx].clear();
+                    } // end on loc
+                }// end coforall loc
+                // writeln("depth = ", depth);
+                // writeln();
+                if !pending_work {
+                    break;
+                }
+                cur_level += 1;
+                frontier_sets_idx = (frontier_sets_idx + 1) % 2;
+            }// end while 
+            return "success";
+        }// end of bfs_kernel_und_agg
+
         rootN = msgArgs.getValueOf("Source");
         root = rootN:int;
 
@@ -617,18 +729,36 @@ module BFSMsg {
             writeln();
             resetCommDiagnostics();
 
-            // var error = false;
-            // for (i,j,k,l,m) in zip(depth1, depth2, depth3, depth4, depth5) {
-            //     if error {
-            //         writeln("ERROR! DEPTHS DO NOT MATCH UP.");
-            //         break;
-            //     }
+            it = 0;
+            for t in times {
+                timer.start();
+                if it == size - 1 then startCommDiagnostics();
+                bfs_kernel_und_agg(ag);
+                timer.stop();
+                if it == size - 1 then stopCommDiagnostics();
+                t = timer.elapsed();
+                timer.clear();
+                it += 1;
+            }
+            var depth6 = depth;
+            writeln("$$$$$$$$$$ Aggregated BFS time elapsed = ", (+ reduce times) / times.size);
+            printCommDiagnosticsTable();
+            writeln();
+            resetCommDiagnostics();
 
-            //     if(i != j) then error = true;
-            //     if(i != k) then error = true;
-            //     if(i != l) then error = true;
-            //     if(i != m) then error = true;
-            // }
+            var error = false;
+            for (i,j,k,l,m,n) in zip(depth1, depth2, depth3, depth4, depth5, depth6) {
+                if error {
+                    writeln("ERROR! DEPTHS DO NOT MATCH UP.");
+                    break;
+                }
+
+                if(i != j) then error = true;
+                if(i != k) then error = true;
+                if(i != l) then error = true;
+                if(i != m) then error = true;
+                if(i != n) then error = true;
+            }
             repMsg=return_depth();
         }
         smLogger.debug(getModuleName(),getRoutineName(),getLineNumber(),repMsg);
