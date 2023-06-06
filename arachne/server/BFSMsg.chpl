@@ -452,7 +452,7 @@ module BFSMsg {
                                 var edgeId = START_I_COMPLETE[i];
                                 var nextStart = max(edgeId, edgeBegin);
                                 var nextEnd = min(edgeEnd, edgeId + numNF - 1);
-                                ref neighborhood = DST_COMPLETE.localSlice(nextStart..nextEnd);
+                                ref neighborhood = DST_COMPLETE[nextStart..nextEnd];
                                 forall j in neighborhood {
                                     if (depth[j] == -1) {
                                         depth[j] = cur_level + 1;
