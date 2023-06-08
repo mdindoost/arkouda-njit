@@ -1,13 +1,13 @@
 module Aggregators {
     // Chapel modules.
     use ReplicatedDist;
-    use CommAggregation;
     use Set;
 
     // Package modules.
     use CopyAggregation;
 
     // Arkouda modules.
+    use CommAggregation;
     use ServerConfig;
 
     /** 
@@ -98,7 +98,7 @@ module Aggregators {
             const myBufferIdx = bufferIdx;
             if myBufferIdx == 0 then return;
 
-            // Get refernce to allocated remote buffer at loc and allocate it if it wasn't already.
+            // Get refernece to allocated remote buffer at loc and allocate it if it wasn't already.
             ref rBuffer = rBuffers[loc];
             const remBufferPtr = rBuffer.cachedAlloc();
 

@@ -625,83 +625,83 @@ module BFSMsg {
             writeln();
             resetCommDiagnostics();
 
-            it = 0;
-            for t in times {
-                timer.start();
-                if it == size - 1 then startCommDiagnostics();
-                bfs_kernel_und_concatenate(
-                    toSymEntry(ag.getComp("NEIGHBOR"), int).a,
-                    toSymEntry(ag.getComp("START_IDX"), int).a,
-                    toSymEntry(ag.getComp("SRC"), int).a,
-                    toSymEntry(ag.getComp("DST"), int).a,
-                    toSymEntry(ag.getComp("NEIGHBOR_R"), int).a,
-                    toSymEntry(ag.getComp("START_IDX_R"), int).a,
-                    toSymEntry(ag.getComp("SRC_R"), int).a,
-                    toSymEntry(ag.getComp("DST_R"), int).a
-                );
-                timer.stop();
-                if it == size - 1 then stopCommDiagnostics();
-                t = timer.elapsed();
-                timer.clear();
-                it += 1;
-            }
-            var depth2 = depth;
-            writeln("$$$$$$$$$$ Neighbor concatenate BFS time elapsed = ", (+ reduce times) / times.size);
-            printCommDiagnosticsTable();
-            writeln();
-            resetCommDiagnostics();
+            // it = 0;
+            // for t in times {
+            //     timer.start();
+            //     if it == size - 1 then startCommDiagnostics();
+            //     bfs_kernel_und_concatenate(
+            //         toSymEntry(ag.getComp("NEIGHBOR"), int).a,
+            //         toSymEntry(ag.getComp("START_IDX"), int).a,
+            //         toSymEntry(ag.getComp("SRC"), int).a,
+            //         toSymEntry(ag.getComp("DST"), int).a,
+            //         toSymEntry(ag.getComp("NEIGHBOR_R"), int).a,
+            //         toSymEntry(ag.getComp("START_IDX_R"), int).a,
+            //         toSymEntry(ag.getComp("SRC_R"), int).a,
+            //         toSymEntry(ag.getComp("DST_R"), int).a
+            //     );
+            //     timer.stop();
+            //     if it == size - 1 then stopCommDiagnostics();
+            //     t = timer.elapsed();
+            //     timer.clear();
+            //     it += 1;
+            // }
+            // var depth2 = depth;
+            // writeln("$$$$$$$$$$ Neighbor concatenate BFS time elapsed = ", (+ reduce times) / times.size);
+            // printCommDiagnosticsTable();
+            // writeln();
+            // resetCommDiagnostics();
 
-            it = 0;
-            for t in times {
-                timer.start();
-                if it == size - 1 then startCommDiagnostics();
-                bfs_kernel_und_cobegin(
-                    toSymEntry(ag.getComp("NEIGHBOR"), int).a,
-                    toSymEntry(ag.getComp("START_IDX"), int).a,
-                    toSymEntry(ag.getComp("SRC"), int).a,
-                    toSymEntry(ag.getComp("DST"), int).a,
-                    toSymEntry(ag.getComp("NEIGHBOR_R"), int).a,
-                    toSymEntry(ag.getComp("START_IDX_R"), int).a,
-                    toSymEntry(ag.getComp("SRC_R"), int).a,
-                    toSymEntry(ag.getComp("DST_R"), int).a
-                );
-                timer.stop();
-                if it == size - 1 then stopCommDiagnostics();
-                t = timer.elapsed();
-                timer.clear();
-                it += 1;
-            }
-            var depth3 = depth;
-            writeln("$$$$$$$$$$ Neighbor cobegin BFS time elapsed = ", (+ reduce times) / times.size);
-            printCommDiagnosticsTable();
-            writeln();
-            resetCommDiagnostics();
+            // it = 0;
+            // for t in times {
+            //     timer.start();
+            //     if it == size - 1 then startCommDiagnostics();
+            //     bfs_kernel_und_cobegin(
+            //         toSymEntry(ag.getComp("NEIGHBOR"), int).a,
+            //         toSymEntry(ag.getComp("START_IDX"), int).a,
+            //         toSymEntry(ag.getComp("SRC"), int).a,
+            //         toSymEntry(ag.getComp("DST"), int).a,
+            //         toSymEntry(ag.getComp("NEIGHBOR_R"), int).a,
+            //         toSymEntry(ag.getComp("START_IDX_R"), int).a,
+            //         toSymEntry(ag.getComp("SRC_R"), int).a,
+            //         toSymEntry(ag.getComp("DST_R"), int).a
+            //     );
+            //     timer.stop();
+            //     if it == size - 1 then stopCommDiagnostics();
+            //     t = timer.elapsed();
+            //     timer.clear();
+            //     it += 1;
+            // }
+            // var depth3 = depth;
+            // writeln("$$$$$$$$$$ Neighbor cobegin BFS time elapsed = ", (+ reduce times) / times.size);
+            // printCommDiagnosticsTable();
+            // writeln();
+            // resetCommDiagnostics();
 
-            it = 0;
-            for t in times {
-                timer.start();
-                if it == size - 1 then startCommDiagnostics();
-                bfs_kernel_und_adj_list(
-                    toSymEntry(ag.getComp("NEIGHBOR"), int).a,
-                    toSymEntry(ag.getComp("START_IDX"), int).a,
-                    toSymEntry(ag.getComp("SRC"), int).a,
-                    toSymEntry(ag.getComp("DST"), int).a,
-                    toSymEntry(ag.getComp("NEIGHBOR_R"), int).a,
-                    toSymEntry(ag.getComp("START_IDX_R"), int).a,
-                    toSymEntry(ag.getComp("SRC_R"), int).a,
-                    toSymEntry(ag.getComp("DST_R"), int).a
-                );
-                timer.stop();
-                if it == size - 1 then stopCommDiagnostics();
-                t = timer.elapsed();
-                timer.clear();
-                it += 1;
-            }
-            var depth4 = depth;
-            writeln("$$$$$$$$$$ Adjacency list BFS time elapsed = ", (+ reduce times) / times.size);
-            printCommDiagnosticsTable();
-            writeln();
-            resetCommDiagnostics();
+            // it = 0;
+            // for t in times {
+            //     timer.start();
+            //     if it == size - 1 then startCommDiagnostics();
+            //     bfs_kernel_und_adj_list(
+            //         toSymEntry(ag.getComp("NEIGHBOR"), int).a,
+            //         toSymEntry(ag.getComp("START_IDX"), int).a,
+            //         toSymEntry(ag.getComp("SRC"), int).a,
+            //         toSymEntry(ag.getComp("DST"), int).a,
+            //         toSymEntry(ag.getComp("NEIGHBOR_R"), int).a,
+            //         toSymEntry(ag.getComp("START_IDX_R"), int).a,
+            //         toSymEntry(ag.getComp("SRC_R"), int).a,
+            //         toSymEntry(ag.getComp("DST_R"), int).a
+            //     );
+            //     timer.stop();
+            //     if it == size - 1 then stopCommDiagnostics();
+            //     t = timer.elapsed();
+            //     timer.clear();
+            //     it += 1;
+            // }
+            // var depth4 = depth;
+            // writeln("$$$$$$$$$$ Adjacency list BFS time elapsed = ", (+ reduce times) / times.size);
+            // printCommDiagnosticsTable();
+            // writeln();
+            // resetCommDiagnostics();
 
             it = 0;
             for t in times {
@@ -747,15 +747,15 @@ module BFSMsg {
             resetCommDiagnostics();
 
             var error = false;
-            for (i,j,k,l,m,n) in zip(depth1, depth2, depth3, depth4, depth5, depth6) {
+            for (i,/*j,k,l,*/m,n) in zip(depth1,/* depth2, depth3, depth4,*/ depth5, depth6) {
                 if error {
                     writeln("ERROR! DEPTHS DO NOT MATCH UP.");
                     break;
                 }
 
-                if(i != j) then error = true;
-                if(i != k) then error = true;
-                if(i != l) then error = true;
+                // if(i != j) then error = true;
+                // if(i != k) then error = true;
+                // if(i != l) then error = true;
                 if(i != m) then error = true;
                 if(i != n) then error = true;
             }
